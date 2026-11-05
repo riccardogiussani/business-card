@@ -27,7 +27,7 @@ The included workflow publishes the repository root. No install or build step is
 
 ## Marker setup
 
-Use large, flat, high-contrast ArUco markers with a white quiet border. Enter the printed black-square side length in centimeters. Avoid glossy paper, folds, dim light, and extreme viewing angles. A rigid multi-marker board can improve pose robustness; this prototype currently reports the first detected marker rather than solving a board.
+Use large, flat, high-contrast Original ArUco markers (`DICT_ARUCO_ORIGINAL`) with a white margin. Enter the printed black-square side length in centimeters. Avoid glossy paper, folds, dim light, and extreme viewing angles. The scanner outlines each detected ArUco marker and QR code and estimates its pose individually. Each size setting applies to all detections of that type.
 
 ## Libraries
 

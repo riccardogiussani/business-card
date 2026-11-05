@@ -35,8 +35,16 @@
     </section>
 
     <section class="readouts">
-      <article><h2>QR code</h2><p id="qrResult" class="empty">Nessun QR rilevato</p><div id="qrPose" class="pose">—</div></article>
-      <article><h2>ArUco</h2><p id="arucoResult" class="empty">Nessun marker rilevato</p><div id="arucoPose" class="pose">—</div></article>
+      <article>
+        <h2>QR code</h2>
+        <p class="empty">Nessun QR rilevato</p>
+        <ul id="qrResults" class="detection-list"></ul>
+      </article>
+      <article>
+        <h2>ArUco</h2>
+        <p class="empty">Nessun marker rilevato</p>
+        <ul id="arucoResults" class="detection-list"></ul>
+      </article>
     </section>
     <p class="note">La posa è una stima visiva relativa alla fotocamera. Per una posa 3D del QR, imposta la sua larghezza fisica; per ArUco, imposta il lato del marker. Luce, distanza e calibrazione influenzano la precisione.</p>
     <footer>Prototipo browser · richiede HTTPS (GitHub Pages lo fornisce)</footer>

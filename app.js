@@ -8,15 +8,11 @@
   const startButton = document.querySelector('#start');
   const stopButton = document.querySelector('#stop');
   const placeholder = document.querySelector('#placeholder');
-  const qrText = document.querySelector('#qrResult');
-  const qrPose = document.querySelector('#qrPose');
-  const markerText = document.querySelector('#arucoResult');
-  const markerPose = document.querySelector('#arucoPose');
+  const qrResults = document.querySelector('#qrResults');
+  const markerResults = document.querySelector('#arucoResults');
   let stream;
   let detector;
   let animation;
-  let lastQR = '';
-  let lastMarker = '';
   let busy = false;
 
   function setStatus(message, kind = '') {
@@ -30,12 +26,15 @@
     return width / (2 * Math.tan(Math.PI / 6));
   }
 
+  function tracePolygon(context, points) {
+    context.beginPath();
+    context.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) context.lineTo(points[i].x, points[i].y);
+    context.closePath();
+  }
+
   function drawPolygon(points, color, label) {
-    if (!points || points.length < 4) return;
-    ctx.beginPath();
-    ctx.moveTo(points[0].x, points[0].y);
-    for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
-    ctx.closePath();
+    tracePolygon(ctx, points);
     ctx.strokeStyle = color;
     ctx.lineWidth = Math.max(3, canvas.width / 240);
     ctx.stroke();
@@ -64,6 +63,73 @@
     el.textContent = `x ${p.x.toFixed(1)} cm · y ${p.y.toFixed(1)} cm · distanza ${p.z.toFixed(1)} cm · rot. ${p.yaw.toFixed(0)}°`;
   }
 
+  function showDetections(list, detections, size, color) {
+    list.previousElementSibling.hidden = detections.length > 0;
+    while (list.children.length > detections.length) list.lastElementChild.remove();
+
+    detections.forEach(({ corners, label, title = '' }, index) => {
+      let row = list.children[index];
+      if (!row) {
+        row = document.createElement('li');
+        const pose = document.createElement('div');
+        pose.className = 'pose';
+        row.append(document.createElement('p'), pose);
+        list.append(row);
+      }
+      drawPolygon(corners, color, label);
+      const text = row.firstElementChild;
+      const compact = title.length > 52 ? `${title.slice(0, 52)}…` : title;
+      const caption = compact ? `${label} · ${compact}` : label;
+      if (text.textContent !== caption) text.textContent = caption;
+      if (text.title !== title) text.title = title;
+      showPose(row.lastElementChild, solveSquarePose(corners, size));
+    });
+  }
+
+  function sameSquare(a, b) {
+    return a.every((point, i) => Math.hypot(point.x - b[i].x, point.y - b[i].y) < 10);
+  }
+
+  function detectMarkers(image) {
+    if (!detector) return [];
+    const markers = detector.detect(image);
+    // The same printed marker can produce both an outer and an inner contour.
+    markers.sort((a, b) => CV.perimeter(b.corners) - CV.perimeter(a.corners));
+    const detections = [];
+    for (const { id, corners } of markers) {
+      const label = `ArUco ${id}`;
+      if (!detections.some(item => item.label === label && sameSquare(item.corners, corners))) {
+        detections.push({ corners, label });
+      }
+    }
+    return detections;
+  }
+
+  function detectQRCodes(image) {
+    const detections = [];
+    if (!window.jsQR) return detections;
+    const { width, height } = image;
+    const options = { inversionAttempts: 'dontInvert' };
+
+    while (true) {
+      const code = jsQR(image.data, width, height, options);
+      if (!code?.location) break;
+      const loc = code.location;
+      const corners = [loc.topLeftCorner, loc.topRightCorner, loc.bottomRightCorner, loc.bottomLeftCorner];
+      if (detections.some(item => sameSquare(item.corners, corners))) break;
+      detections.push({ corners, label: `QR ${detections.length + 1}`, title: code.data });
+
+      // jsQR returns one result per call. Cover it on the working copy and scan again.
+      tracePolygon(wctx, corners);
+      wctx.fillStyle = wctx.strokeStyle = '#fff';
+      wctx.lineWidth = 4;
+      wctx.fill();
+      wctx.stroke();
+      image = wctx.getImageData(0, 0, width, height);
+    }
+    return detections;
+  }
+
   function frame() {
     if (!stream || video.readyState < 2 || busy) {
       animation = requestAnimationFrame(frame);
@@ -86,54 +152,10 @@
     const image = wctx.getImageData(0, 0, width, height);
 
     try {
-      if (detector) {
-        const markers = detector.detect(image);
-        if (markers.length) {
-          const marker = markers[0];
-          drawPolygon(marker.corners, '#59f0bd', `ArUco ${marker.id}`);
-          const key = String(marker.id);
-          if (key !== lastMarker) {
-            markerText.textContent = `Marker ${marker.id}`;
-            markerText.classList.remove('empty');
-            lastMarker = key;
-          }
-          const size = Number(document.querySelector('#markerSize').value) || 10;
-          showPose(markerPose, solveSquarePose(marker.corners, size));
-        } else {
-          markerText.textContent = 'Nessun marker rilevato';
-          markerText.classList.add('empty');
-          markerPose.textContent = '—';
-          lastMarker = '';
-        }
-      }
-
-      if (window.jsQR) {
-        const code = jsQR(image.data, width, height, { inversionAttempts: 'dontInvert' });
-        if (code?.location) {
-          const loc = code.location;
-          const corners = [
-            { x: loc.topLeftCorner.x, y: loc.topLeftCorner.y },
-            { x: loc.topRightCorner.x, y: loc.topRightCorner.y },
-            { x: loc.bottomRightCorner.x, y: loc.bottomRightCorner.y },
-            { x: loc.bottomLeftCorner.x, y: loc.bottomLeftCorner.y }
-          ];
-          drawPolygon(corners, '#ffc45b', 'QR');
-          const compact = code.data.length > 52 ? `${code.data.slice(0, 52)}…` : code.data;
-          qrText.textContent = compact;
-          qrText.classList.remove('empty');
-          if (code.data !== lastQR) {
-            lastQR = code.data;
-            qrText.title = code.data;
-          }
-          const size = Number(document.querySelector('#qrSize').value) || 5;
-          showPose(qrPose, solveSquarePose(corners, size));
-        } else {
-          qrText.textContent = 'Nessun QR rilevato';
-          qrText.classList.add('empty');
-          qrPose.textContent = '—';
-          lastQR = '';
-        }
-      }
+      const markerSize = Number(document.querySelector('#markerSize').value) || 10;
+      showDetections(markerResults, detectMarkers(image), markerSize, '#59f0bd');
+      const qrSize = Number(document.querySelector('#qrSize').value) || 5;
+      showDetections(qrResults, detectQRCodes(image), qrSize, '#ffc45b');
     } catch (error) {
       console.warn('Frame detection failed', error);
     }
@@ -173,6 +195,8 @@
     stream = null;
     video.srcObject = null;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    showDetections(markerResults, []);
+    showDetections(qrResults, []);
     placeholder.hidden = false;
     startButton.disabled = false;
     stopButton.disabled = true;
