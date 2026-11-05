@@ -41,7 +41,7 @@ function squareToQuad([topLeft, topRight, bottomRight, bottomLeft]) {
   };
 }
 
-function squareCenter(corners, sideCm, focal, cx, cy) {
+export function squareCenter(corners, sideCm, focal, cx, cy) {
   const normalized = corners.map(({ x, y }) => ({ x: (x - cx) / focal, y: (y - cy) / focal }));
   const plane = squareToQuad(normalized);
   if (!plane) return null;
@@ -53,8 +53,7 @@ function squareCenter(corners, sideCm, focal, cx, cy) {
   return [e + (a + c) / 2, f + (b + d) / 2, 1 + (g + h) / 2].map(value => value * scale);
 }
 
-export function verticalCardTransform(corners, { sideCm, up, focal, cx, cy, width, height }) {
-  const center = squareCenter(corners, sideCm, focal, cx, cy);
+export function verticalCardTransform(center, { up, focal, cx, cy, width, height }) {
   if (!center || !width || !height) return null;
   const bottom = center.map((value, i) => value + up[i] * cardRiseCm);
   const [ux, uy, uz] = up;

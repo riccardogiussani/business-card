@@ -1,4 +1,4 @@
-import { cameraUpVector, verticalCardTransform } from './spatial-card.js';
+import { cameraUpVector, squareCenter, verticalCardTransform } from './spatial-card.js';
 
 (() => {
   const video = document.querySelector('#video');
@@ -19,6 +19,9 @@ import { cameraUpVector, verticalCardTransform } from './spatial-card.js';
   const businessCardInitials = document.querySelector('#businessCardInitials');
   const businessCardContact = document.querySelector('#businessCardContact');
   const businessCardLink = document.querySelector('#businessCardLink');
+  const useVideoFrames = typeof video.requestVideoFrameCallback === 'function' &&
+    typeof video.cancelVideoFrameCallback === 'function';
+  const cardHoldMs = 250;
   const pageUrl = new URL(window.location.href);
   const profiles = new Map([
     ['riccardo', {
@@ -31,9 +34,12 @@ import { cameraUpVector, verticalCardTransform } from './spatial-card.js';
   let stream;
   let detector;
   let animation;
-  let busy = false;
+  let scanHandle;
+  let lastVideoTime;
   let displayedProfile;
-  let lastCardSeen = -Infinity;
+  let cardTarget;
+  let cardMotion;
+  let cardLayout;
   let cameraRequest = 0;
   let cameraFacing;
   let deviceOrientation;
@@ -186,7 +192,7 @@ import { cameraUpVector, verticalCardTransform } from './spatial-card.js';
     }
   }
 
-  function updateBusinessCard(codes, qrSize) {
+  function updateCardTarget(codes, qrSize) {
     const now = performance.now();
     const width = viewer.clientWidth;
     const height = viewer.clientHeight;
@@ -207,63 +213,104 @@ import { cameraUpVector, verticalCardTransform } from './spatial-card.js';
       const bottom = Math.max(...ys);
       if (right <= 0 || left >= width || bottom <= 0 || top >= height) continue;
 
-      if (displayedProfile !== profile) {
-        businessCardName.textContent = profile.name;
-        businessCardInitials.textContent = profile.initials;
-        businessCardContact.href = profile.contact;
-        businessCardLink.href = profile.website;
-        displayedProfile = profile;
+      if (!cardTarget || cardTarget.profile !== profile || now - cardTarget.seen >= cardHoldMs ||
+          cardTarget.width !== width || cardTarget.height !== height) {
+        cardMotion = undefined;
       }
-      const mode = deviceOrientation ? 'Scheda verticale' : 'Scheda 2D';
-      if (businessCardMode.textContent !== mode) businessCardMode.textContent = mode;
-      businessCard.hidden = false;
-      const cardWidth = businessCard.offsetWidth;
-      const cardHeight = businessCard.offsetHeight;
-
-      if (deviceOrientation) {
-        const { beta, gamma } = deviceOrientation;
-        const screenAngle = window.screen.orientation?.angle ?? window.orientation ?? 0;
-        const up = cameraUpVector(beta, gamma, screenAngle, cameraFacing);
-        const transform = verticalCardTransform(points, {
-          sideCm: qrSize, up, focal: focalLengthPx(canvas.width) * scale,
-          cx: width / 2, cy: height / 2, width: cardWidth, height: cardHeight
-        });
-        // An exactly edge-on card has no readable projection.
-        if (!transform) {
-          businessCard.hidden = true;
-          continue;
-        }
-        businessCard.style.transform = transform;
-      } else {
-        const inset = 8;
-        const gap = 12;
-        const x = Math.max(inset, Math.min((left + right - cardWidth) / 2, width - cardWidth - inset));
-        const above = top - gap - cardHeight;
-        const y = Math.max(inset, Math.min(above >= inset ? above : bottom + gap, height - cardHeight - inset));
-        businessCard.style.transform = `translate3d(${x}px, ${y}px, 0)`;
-      }
-      lastCardSeen = now;
+      const focal = focalLengthPx(canvas.width) * scale;
+      const center = squareCenter(points, qrSize, focal, width / 2, height / 2);
+      cardTarget = { profile, left, right, top, bottom, width, height, focal, center, seen: now };
       return;
     }
-    if (now - lastCardSeen >= 250) businessCard.hidden = true;
   }
 
-  function frame() {
-    if (!stream || video.readyState < 2 || busy) {
-      animation = requestAnimationFrame(frame);
+  function smoothPosition(target, now, spatial) {
+    if (!cardMotion || cardMotion.spatial !== spatial) {
+      cardMotion = { spatial, position: target, time: now };
+      return target;
+    }
+    const delta = target.map((value, i) => value - cardMotion.position[i]);
+    // Filter small tremors more heavily, but catch up quickly on large moves.
+    const movement = Math.min(1, Math.hypot(...delta) / (spatial ? 3 : 28));
+    const timeConstant = 48 - 34 * movement;
+    const blend = 1 - Math.exp(-Math.max(0, now - cardMotion.time) / timeConstant);
+    const position = cardMotion.position.map((value, i) => value + delta[i] * blend);
+    cardMotion = { spatial, position, time: now };
+    return position;
+  }
+
+  function clearCard() {
+    businessCard.hidden = true;
+    cardTarget = undefined;
+    cardMotion = undefined;
+  }
+
+  function renderCard(now) {
+    if (!stream) return;
+    animation = requestAnimationFrame(renderCard);
+    if (!cardTarget) return;
+    if (now - cardTarget.seen >= cardHoldMs) {
+      clearCard();
       return;
     }
-    busy = true;
+
+    const { profile, left, right, top, bottom, width, height, focal, center } = cardTarget;
+    const mode = deviceOrientation ? 'Scheda verticale' : 'Scheda 2D';
+    const measureCard = displayedProfile !== profile || businessCardMode.textContent !== mode ||
+      cardLayout?.viewerWidth !== width;
+    if (displayedProfile !== profile) {
+      businessCardName.textContent = profile.name;
+      businessCardInitials.textContent = profile.initials;
+      businessCardContact.href = profile.contact;
+      businessCardLink.href = profile.website;
+      displayedProfile = profile;
+    }
+    if (businessCardMode.textContent !== mode) businessCardMode.textContent = mode;
+    if (measureCard) {
+      businessCard.hidden = false;
+      cardLayout = { viewerWidth: width, cardWidth: businessCard.offsetWidth, cardHeight: businessCard.offsetHeight };
+    }
+    const { cardWidth, cardHeight } = cardLayout;
+
+    if (deviceOrientation) {
+      const { beta, gamma } = deviceOrientation;
+      const screenAngle = window.screen.orientation?.angle ?? window.orientation ?? 0;
+      const up = cameraUpVector(beta, gamma, screenAngle, cameraFacing);
+      const position = center && smoothPosition(center, now, true);
+      const transform = verticalCardTransform(position, {
+        up, focal, cx: width / 2, cy: height / 2, width: cardWidth, height: cardHeight
+      });
+      // An exactly edge-on card has no readable projection.
+      if (transform) businessCard.style.transform = transform;
+      businessCard.hidden = !transform;
+    } else {
+      const inset = 8;
+      const gap = 12;
+      const x = Math.max(inset, Math.min((left + right - cardWidth) / 2, width - cardWidth - inset));
+      const above = top - gap - cardHeight;
+      const y = Math.max(inset, Math.min(above >= inset ? above : bottom + gap, height - cardHeight - inset));
+      const [smoothX, smoothY] = smoothPosition([x, y], now, false);
+      businessCard.style.transform = `translate3d(${smoothX}px, ${smoothY}px, 0)`;
+      businessCard.hidden = false;
+    }
+  }
+
+  function scheduleScan() {
+    scanHandle = useVideoFrames ? video.requestVideoFrameCallback(scanFrame) : requestAnimationFrame(scanFrame);
+  }
+
+  function scanFrame() {
+    if (!stream) return;
+    scheduleScan();
+    if (video.readyState < 2 || (!useVideoFrames && video.currentTime === lastVideoTime)) return;
     const width = video.videoWidth;
     const height = video.videoHeight;
-    if (!width || !height) {
-      busy = false;
-      animation = requestAnimationFrame(frame);
-      return;
-    }
+    if (!width || !height) return;
+    lastVideoTime = video.currentTime;
     if (canvas.width !== width || canvas.height !== height) {
       canvas.width = work.width = width;
       canvas.height = work.height = height;
+      clearCard();
     }
     ctx.clearRect(0, 0, width, height);
     wctx.drawImage(video, 0, 0, width, height);
@@ -273,16 +320,13 @@ import { cameraUpVector, verticalCardTransform } from './spatial-card.js';
       const markers = detectMarkers(image);
       const codes = detectQRCodes(image);
       const qrSize = Math.max(0, Number(document.querySelector('#qrSize').value)) || 5;
-      updateBusinessCard(codes, qrSize);
+      updateCardTarget(codes, qrSize);
       const markerSize = Number(document.querySelector('#markerSize').value) || 10;
       showDetections(markerResults, markers, markerSize, '#59f0bd');
       showDetections(qrResults, codes, qrSize, '#ffc45b');
     } catch (error) {
-      updateBusinessCard([]);
       console.warn('Frame detection failed', error);
     }
-    busy = false;
-    animation = requestAnimationFrame(frame);
   }
 
   async function startCamera() {
@@ -317,7 +361,8 @@ import { cameraUpVector, verticalCardTransform } from './spatial-card.js';
       setStatus('Camera attiva', 'live');
       if (window.AR?.Detector) detector = new AR.Detector();
       else setStatus('Camera attiva · libreria ArUco non caricata', 'error');
-      frame();
+      scheduleScan();
+      animation = requestAnimationFrame(renderCard);
     } catch (error) {
       if (request !== cameraRequest) return;
       stopCamera();
@@ -329,6 +374,12 @@ import { cameraUpVector, verticalCardTransform } from './spatial-card.js';
   function stopCamera() {
     cameraRequest++;
     cancelAnimationFrame(animation);
+    if (scanHandle !== undefined) {
+      if (useVideoFrames) video.cancelVideoFrameCallback(scanHandle);
+      else cancelAnimationFrame(scanHandle);
+      scanHandle = undefined;
+    }
+    lastVideoTime = undefined;
     window.removeEventListener('deviceorientation', rememberOrientation);
     deviceOrientation = undefined;
     stream?.getTracks().forEach(track => track.stop());
@@ -337,8 +388,7 @@ import { cameraUpVector, verticalCardTransform } from './spatial-card.js';
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     showDetections(markerResults, []);
     showDetections(qrResults, []);
-    businessCard.hidden = true;
-    lastCardSeen = -Infinity;
+    clearCard();
     placeholder.hidden = false;
     startButton.disabled = false;
     stopButton.disabled = true;
