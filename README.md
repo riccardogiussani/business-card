@@ -5,8 +5,10 @@ Static mobile web prototype for GitHub Pages. It requests the camera, detects QR
 ## Try the business card
 
 1. Create a QR code with the full URL of this page and `?card=riccardo`. For example, use `https://YOUR-USER.github.io/ar-business-card/?card=riccardo` if that is your GitHub Pages address.
-2. Scan the QR with the phone camera to open the page, tap **Avvia fotocamera**, and grant camera access.
-3. Point the in-page camera at the same QR. The contact card follows it in the preview and offers the vCard and GitHub links.
+2. Scan the QR with the phone camera to open the page, tap **Avvia fotocamera**, and allow access to motion and orientation if prompted, then to the camera.
+3. Set **Lato QR** to the measured width of the printed code in centimeters, excluding the white margin, and point the in-page camera at the same QR.
+
+With phone orientation available, the card's bottom edge appears approximately 4 cm above the center of the QR, perpendicular to the ground. The card turns horizontally toward the camera. Try it with the QR flat on a table and the phone at an angle. The offset uses estimated camera intrinsics and the entered QR width. When orientation data is unavailable, the page uses the 2D card.
 
 The QR must match the origin and path of the page serving the scanner. The site URL and its `index.html` form are both accepted. Edit the profile in `app.js` and the downloadable contact in `riccardo.vcf` to customize the demo.
 

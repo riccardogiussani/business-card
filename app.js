@@ -1,3 +1,5 @@
+import { cameraUpVector, verticalCardTransform } from './spatial-card.js';
+
 (() => {
   const video = document.querySelector('#video');
   const canvas = document.querySelector('#overlay');
@@ -13,6 +15,7 @@
   const viewer = document.querySelector('.viewer');
   const businessCard = document.querySelector('#businessCard');
   const businessCardName = document.querySelector('#businessCardName');
+  const businessCardMode = document.querySelector('#businessCardMode');
   const businessCardInitials = document.querySelector('#businessCardInitials');
   const businessCardContact = document.querySelector('#businessCardContact');
   const businessCardLink = document.querySelector('#businessCardLink');
@@ -31,6 +34,9 @@
   let busy = false;
   let displayedProfile;
   let lastCardSeen = -Infinity;
+  let cameraRequest = 0;
+  let cameraFacing;
+  let deviceOrientation;
 
   function setStatus(message, kind = '') {
     status.textContent = message;
@@ -165,7 +171,22 @@
     return profiles.get(id);
   }
 
-  function updateBusinessCard(codes) {
+  function rememberOrientation({ beta, gamma }) {
+    if (Number.isFinite(beta) && Number.isFinite(gamma)) deviceOrientation = { beta, gamma };
+  }
+
+  async function allowDeviceOrientation() {
+    const sensor = window.DeviceOrientationEvent;
+    if (!sensor) return false;
+    if (typeof sensor.requestPermission !== 'function') return true;
+    try {
+      return await sensor.requestPermission() === 'granted';
+    } catch {
+      return false;
+    }
+  }
+
+  function updateBusinessCard(codes, qrSize) {
     const now = performance.now();
     const width = viewer.clientWidth;
     const height = viewer.clientHeight;
@@ -177,8 +198,9 @@
     for (const { corners, title } of codes) {
       const profile = profileForQRCode(title);
       if (!profile) continue;
-      const xs = corners.map(point => point.x * scale + offsetX);
-      const ys = corners.map(point => point.y * scale + offsetY);
+      const points = corners.map(({ x, y }) => ({ x: x * scale + offsetX, y: y * scale + offsetY }));
+      const xs = points.map(point => point.x);
+      const ys = points.map(point => point.y);
       const left = Math.min(...xs);
       const right = Math.max(...xs);
       const top = Math.min(...ys);
@@ -192,15 +214,34 @@
         businessCardLink.href = profile.website;
         displayedProfile = profile;
       }
+      const mode = deviceOrientation ? 'Scheda verticale' : 'Scheda 2D';
+      if (businessCardMode.textContent !== mode) businessCardMode.textContent = mode;
       businessCard.hidden = false;
-      const inset = 8;
-      const gap = 12;
       const cardWidth = businessCard.offsetWidth;
       const cardHeight = businessCard.offsetHeight;
-      const x = Math.max(inset, Math.min((left + right - cardWidth) / 2, width - cardWidth - inset));
-      const above = top - gap - cardHeight;
-      const y = Math.max(inset, Math.min(above >= inset ? above : bottom + gap, height - cardHeight - inset));
-      businessCard.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+
+      if (deviceOrientation) {
+        const { beta, gamma } = deviceOrientation;
+        const screenAngle = window.screen.orientation?.angle ?? window.orientation ?? 0;
+        const up = cameraUpVector(beta, gamma, screenAngle, cameraFacing);
+        const transform = verticalCardTransform(points, {
+          sideCm: qrSize, up, focal: focalLengthPx(canvas.width) * scale,
+          cx: width / 2, cy: height / 2, width: cardWidth, height: cardHeight
+        });
+        // An exactly edge-on card has no readable projection.
+        if (!transform) {
+          businessCard.hidden = true;
+          continue;
+        }
+        businessCard.style.transform = transform;
+      } else {
+        const inset = 8;
+        const gap = 12;
+        const x = Math.max(inset, Math.min((left + right - cardWidth) / 2, width - cardWidth - inset));
+        const above = top - gap - cardHeight;
+        const y = Math.max(inset, Math.min(above >= inset ? above : bottom + gap, height - cardHeight - inset));
+        businessCard.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+      }
       lastCardSeen = now;
       return;
     }
@@ -231,10 +272,10 @@
     try {
       const markers = detectMarkers(image);
       const codes = detectQRCodes(image);
-      updateBusinessCard(codes);
+      const qrSize = Math.max(0, Number(document.querySelector('#qrSize').value)) || 5;
+      updateBusinessCard(codes, qrSize);
       const markerSize = Number(document.querySelector('#markerSize').value) || 10;
       showDetections(markerResults, markers, markerSize, '#59f0bd');
-      const qrSize = Number(document.querySelector('#qrSize').value) || 5;
       showDetections(qrResults, codes, qrSize, '#ffc45b');
     } catch (error) {
       updateBusinessCard([]);
@@ -249,29 +290,47 @@
       setStatus('Fotocamera non disponibile', 'error');
       return;
     }
+    stopCamera();
+    const request = cameraRequest;
+    const facing = document.querySelector('#camera').value;
+    startButton.disabled = true;
+    setStatus('Avvio fotocamera');
     try {
-      stream?.getTracks().forEach(track => track.stop());
-      stream = await navigator.mediaDevices.getUserMedia({
+      const orientationAllowed = await allowDeviceOrientation();
+      if (request !== cameraRequest) return;
+      const nextStream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: { facingMode: { ideal: document.querySelector('#camera').value }, width: { ideal: 1280 }, height: { ideal: 720 } }
+        video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } }
       });
+      if (request !== cameraRequest) {
+        nextStream.getTracks().forEach(track => track.stop());
+        return;
+      }
+      stream = nextStream;
+      cameraFacing = stream.getVideoTracks()[0]?.getSettings().facingMode || facing;
+      if (orientationAllowed) window.addEventListener('deviceorientation', rememberOrientation);
       video.srcObject = stream;
       await video.play();
+      if (request !== cameraRequest) return;
       placeholder.hidden = true;
-      startButton.disabled = true;
       stopButton.disabled = false;
       setStatus('Camera attiva', 'live');
       if (window.AR?.Detector) detector = new AR.Detector();
       else setStatus('Camera attiva · libreria ArUco non caricata', 'error');
       frame();
     } catch (error) {
+      if (request !== cameraRequest) return;
+      stopCamera();
       console.error(error);
       setStatus(error.name === 'NotAllowedError' ? 'Permesso camera negato' : 'Errore avvio camera', 'error');
     }
   }
 
   function stopCamera() {
+    cameraRequest++;
     cancelAnimationFrame(animation);
+    window.removeEventListener('deviceorientation', rememberOrientation);
+    deviceOrientation = undefined;
     stream?.getTracks().forEach(track => track.stop());
     stream = null;
     video.srcObject = null;
