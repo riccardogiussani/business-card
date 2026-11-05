@@ -10,10 +10,27 @@
   const placeholder = document.querySelector('#placeholder');
   const qrResults = document.querySelector('#qrResults');
   const markerResults = document.querySelector('#arucoResults');
+  const viewer = document.querySelector('.viewer');
+  const businessCard = document.querySelector('#businessCard');
+  const businessCardName = document.querySelector('#businessCardName');
+  const businessCardInitials = document.querySelector('#businessCardInitials');
+  const businessCardContact = document.querySelector('#businessCardContact');
+  const businessCardLink = document.querySelector('#businessCardLink');
+  const pageUrl = new URL(window.location.href);
+  const profiles = new Map([
+    ['riccardo', {
+      name: 'Riccardo Giussani',
+      initials: 'RG',
+      contact: './riccardo.vcf',
+      website: 'https://github.com/riccardogiussani'
+    }]
+  ]);
   let stream;
   let detector;
   let animation;
   let busy = false;
+  let displayedProfile;
+  let lastCardSeen = -Infinity;
 
   function setStatus(message, kind = '') {
     status.textContent = message;
@@ -130,6 +147,66 @@
     return detections;
   }
 
+  function pagePath(url) {
+    return url.pathname.replace(/(?:\/index\.html|\/)$/, '');
+  }
+
+  function profileForQRCode(value) {
+    let url;
+    try {
+      url = new URL(value);
+    } catch {
+      return undefined;
+    }
+    if (url.origin !== pageUrl.origin || pagePath(url) !== pagePath(pageUrl)) return undefined;
+    const id = url.searchParams.get('card');
+    const requestedId = pageUrl.searchParams.get('card');
+    if (requestedId && id !== requestedId) return undefined;
+    return profiles.get(id);
+  }
+
+  function updateBusinessCard(codes) {
+    const now = performance.now();
+    const width = viewer.clientWidth;
+    const height = viewer.clientHeight;
+    // The preview is center-cropped by object-fit: cover.
+    const scale = Math.max(width / canvas.width, height / canvas.height);
+    const offsetX = (width - canvas.width * scale) / 2;
+    const offsetY = (height - canvas.height * scale) / 2;
+
+    for (const { corners, title } of codes) {
+      const profile = profileForQRCode(title);
+      if (!profile) continue;
+      const xs = corners.map(point => point.x * scale + offsetX);
+      const ys = corners.map(point => point.y * scale + offsetY);
+      const left = Math.min(...xs);
+      const right = Math.max(...xs);
+      const top = Math.min(...ys);
+      const bottom = Math.max(...ys);
+      if (right <= 0 || left >= width || bottom <= 0 || top >= height) continue;
+
+      if (displayedProfile !== profile) {
+        businessCardName.textContent = profile.name;
+        businessCardInitials.textContent = profile.initials;
+        businessCardContact.href = profile.contact;
+        businessCardLink.href = profile.website;
+        displayedProfile = profile;
+      }
+      businessCard.hidden = false;
+      const inset = 8;
+      const gap = 12;
+      const cardWidth = businessCard.offsetWidth;
+      const cardHeight = businessCard.offsetHeight;
+      const x = Math.max(inset, Math.min((left + right - cardWidth) / 2, width - cardWidth - inset));
+      const above = top - gap - cardHeight;
+      const y = Math.max(inset, Math.min(above >= inset ? above : bottom + gap, height - cardHeight - inset));
+      businessCard.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+      lastCardSeen = now;
+      return;
+    }
+    if (now - lastCardSeen >= 250) businessCard.hidden = true;
+  }
+
   function frame() {
     if (!stream || video.readyState < 2 || busy) {
       animation = requestAnimationFrame(frame);
@@ -152,11 +229,15 @@
     const image = wctx.getImageData(0, 0, width, height);
 
     try {
+      const markers = detectMarkers(image);
+      const codes = detectQRCodes(image);
+      updateBusinessCard(codes);
       const markerSize = Number(document.querySelector('#markerSize').value) || 10;
-      showDetections(markerResults, detectMarkers(image), markerSize, '#59f0bd');
+      showDetections(markerResults, markers, markerSize, '#59f0bd');
       const qrSize = Number(document.querySelector('#qrSize').value) || 5;
-      showDetections(qrResults, detectQRCodes(image), qrSize, '#ffc45b');
+      showDetections(qrResults, codes, qrSize, '#ffc45b');
     } catch (error) {
+      updateBusinessCard([]);
       console.warn('Frame detection failed', error);
     }
     busy = false;
@@ -197,6 +278,8 @@
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     showDetections(markerResults, []);
     showDetections(qrResults, []);
+    businessCard.hidden = true;
+    lastCardSeen = -Infinity;
     placeholder.hidden = false;
     startButton.disabled = false;
     stopButton.disabled = true;

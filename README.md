@@ -1,6 +1,14 @@
-# WebAR Marker Scanner
+# AR Business Card
 
 Static mobile web prototype for GitHub Pages. It requests the camera, detects QR codes and ArUco markers, draws outlines over the live preview, and reports an approximate pose relative to the camera.
+
+## Try the business card
+
+1. Create a QR code with the full URL of this page and `?card=riccardo`. For example, use `https://YOUR-USER.github.io/ar-business-card/?card=riccardo` if that is your GitHub Pages address.
+2. Scan the QR with the phone camera to open the page, tap **Avvia fotocamera**, and grant camera access.
+3. Point the in-page camera at the same QR. The contact card follows it in the preview and offers the vCard and GitHub links.
+
+The QR must match the origin and path of the page serving the scanner. The site URL and its `index.html` form are both accepted. Edit the profile in `app.js` and the downloadable contact in `riccardo.vcf` to customize the demo.
 
 ## Run / publish
 

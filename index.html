@@ -4,20 +4,33 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#10151b">
-  <title>WebAR Marker Scanner</title>
+  <title>AR Business Card</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <main class="app">
     <header>
-      <div><p class="eyebrow">WEBAR · CAMERA TOOLS</p><h1>Marker Scanner</h1></div>
+      <div><p class="eyebrow">WEBAR · CONTATTI</p><h1>AR Business Card</h1></div>
       <span id="status" class="status">Camera spenta</span>
     </header>
 
     <section class="viewer" aria-label="Vista della fotocamera">
       <video id="video" playsinline muted></video>
       <canvas id="overlay"></canvas>
-      <div id="placeholder" class="placeholder"><span>◉</span><b>Avvia la fotocamera</b><small>Consenti l'accesso quando richiesto</small></div>
+      <article id="businessCard" class="business-card" aria-labelledby="businessCardName" hidden>
+        <div class="business-card-header">
+          <span id="businessCardInitials" class="business-card-avatar" aria-hidden="true"></span>
+          <div>
+            <p>Biglietto da visita</p>
+            <h2 id="businessCardName"></h2>
+          </div>
+        </div>
+        <div class="business-card-actions">
+          <a id="businessCardContact" download>Salva contatto</a>
+          <a id="businessCardLink" target="_blank" rel="noopener noreferrer">GitHub</a>
+        </div>
+      </article>
+      <div id="placeholder" class="placeholder"><span>◉</span><b>Avvia la fotocamera</b><small>Poi inquadra il QR del biglietto</small></div>
     </section>
 
     <section class="controls">
