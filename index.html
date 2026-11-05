@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#10151b">
+  <title>WebAR Marker Scanner</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app">
+    <header>
+      <div><p class="eyebrow">WEBAR · CAMERA TOOLS</p><h1>Marker Scanner</h1></div>
+      <span id="status" class="status">Camera spenta</span>
+    </header>
+
+    <section class="viewer" aria-label="Vista della fotocamera">
+      <video id="video" playsinline muted></video>
+      <canvas id="overlay"></canvas>
+      <div id="placeholder" class="placeholder"><span>◉</span><b>Avvia la fotocamera</b><small>Consenti l'accesso quando richiesto</small></div>
+    </section>
+
+    <section class="controls">
+      <button id="start" class="primary">Avvia fotocamera</button>
+      <button id="stop" disabled>Arresta</button>
+      <label>Camera
+        <select id="camera"><option value="environment">Posteriore</option><option value="user">Anteriore</option></select>
+      </label>
+      <label>Dimensione ArUco <span class="unit">cm</span>
+        <input id="markerSize" type="number" min="1" max="100" value="10" step="0.5">
+      </label>
+      <label>Lato QR <span class="unit">cm</span>
+        <input id="qrSize" type="number" min="1" max="100" value="5" step="0.5">
+      </label>
+    </section>
+
+    <section class="readouts">
+      <article><h2>QR code</h2><p id="qrResult" class="empty">Nessun QR rilevato</p><div id="qrPose" class="pose">—</div></article>
+      <article><h2>ArUco</h2><p id="arucoResult" class="empty">Nessun marker rilevato</p><div id="arucoPose" class="pose">—</div></article>
+    </section>
+    <p class="note">La posa è una stima visiva relativa alla fotocamera. Per una posa 3D del QR, imposta la sua larghezza fisica; per ArUco, imposta il lato del marker. Luce, distanza e calibrazione influenzano la precisione.</p>
+    <footer>Prototipo browser · richiede HTTPS (GitHub Pages lo fornisce)</footer>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/gh/jcmellado/js-aruco@master/src/cv.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/jcmellado/js-aruco@master/src/aruco.js"></script>
+  <script src="https://cdn.jsdelivr.net/gh/jcmellado/js-aruco@master/src/posit1.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
