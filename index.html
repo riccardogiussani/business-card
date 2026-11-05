@@ -17,6 +17,24 @@
     <section class="viewer" aria-label="Vista della fotocamera">
       <video id="video" playsinline muted></video>
       <canvas id="overlay"></canvas>
+      <div id="robotCell" class="robot-cell" aria-label="Dimostrazione della cella robotica" hidden>
+        <div class="cell-hud">
+          <div>
+            <b>Cella 01</b>
+            <span>Telemetria simulata</span>
+          </div>
+          <div class="cell-metrics">
+            <span id="cellCount">0 / 3 pezzi</span>
+            <span id="cellTimer">Ciclo 0,0 s</span>
+          </div>
+          <button id="cellContact" type="button">Contatto</button>
+        </div>
+        <div class="cell-warning-layer" role="status">
+          <span id="cellExitWarning" class="cell-warning" hidden>Uscita occupata</span>
+          <span id="cellCycleWarning" class="cell-warning" hidden>Tempo ciclo oltre soglia</span>
+        </div>
+        <button id="cellUnlock" class="cell-unlock" type="button" hidden>Sblocca uscita</button>
+      </div>
       <article id="businessCard" class="business-card" aria-labelledby="businessCardName" hidden>
         <div class="business-card-header">
           <span id="businessCardInitials" class="business-card-avatar" aria-hidden="true"></span>

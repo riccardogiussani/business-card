@@ -19,6 +19,7 @@ import { cameraUpVector, squareCenter, verticalCardTransform } from './spatial-c
   const businessCardInitials = document.querySelector('#businessCardInitials');
   const businessCardContact = document.querySelector('#businessCardContact');
   const businessCardLink = document.querySelector('#businessCardLink');
+  const robotLayer = document.querySelector('#robotCell');
   const useVideoFrames = typeof video.requestVideoFrameCallback === 'function' &&
     typeof video.cancelVideoFrameCallback === 'function';
   const cardHoldMs = 250;
@@ -40,6 +41,8 @@ import { cameraUpVector, squareCenter, verticalCardTransform } from './spatial-c
   let cardTarget;
   let cardMotion;
   let cardLayout;
+  let robotCell;
+  let robotCellLoad;
   let cameraRequest = 0;
   let cameraFacing;
   let deviceOrientation;
@@ -241,8 +244,22 @@ import { cameraUpVector, squareCenter, verticalCardTransform } from './spatial-c
 
   function clearCard() {
     businessCard.hidden = true;
+    robotCell?.pause();
     cardTarget = undefined;
     cardMotion = undefined;
+  }
+
+  function prepareRobotCell() {
+    robotCellLoad ??= import('./robot-cell.js')
+      .then(({ createRobotCell }) => { robotCell = createRobotCell(robotLayer); })
+      .catch(error => console.warn('Robot demo unavailable', error));
+  }
+
+  function cameraUp() {
+    if (!deviceOrientation) return null;
+    const { beta, gamma } = deviceOrientation;
+    const screenAngle = window.screen.orientation?.angle ?? window.orientation ?? 0;
+    return cameraUpVector(beta, gamma, screenAngle, cameraFacing);
   }
 
   function renderCard(now) {
@@ -255,7 +272,25 @@ import { cameraUpVector, squareCenter, verticalCardTransform } from './spatial-c
     }
 
     const { profile, left, right, top, bottom, width, height, focal, center } = cardTarget;
-    const mode = deviceOrientation ? 'Scheda verticale' : 'Scheda 2D';
+    const up = cameraUp();
+    const playDemo = robotCell && !robotCell.complete && center;
+    const position = (up || playDemo) && center && smoothPosition(center, now, true);
+    if (playDemo) {
+      try {
+        if (robotCell.render(now, { center: position, worldUp: up, width, height, focal })) {
+          businessCard.hidden = true;
+          return;
+        }
+      } catch (error) {
+        robotCell.pause();
+        robotCell = undefined;
+        console.warn('Robot demo unavailable', error);
+      }
+    } else {
+      robotCell?.pause();
+    }
+
+    const mode = up ? 'Scheda verticale' : 'Scheda 2D';
     const measureCard = displayedProfile !== profile || businessCardMode.textContent !== mode ||
       cardLayout?.viewerWidth !== width;
     if (displayedProfile !== profile) {
@@ -272,11 +307,7 @@ import { cameraUpVector, squareCenter, verticalCardTransform } from './spatial-c
     }
     const { cardWidth, cardHeight } = cardLayout;
 
-    if (deviceOrientation) {
-      const { beta, gamma } = deviceOrientation;
-      const screenAngle = window.screen.orientation?.angle ?? window.orientation ?? 0;
-      const up = cameraUpVector(beta, gamma, screenAngle, cameraFacing);
-      const position = center && smoothPosition(center, now, true);
+    if (up) {
       const transform = verticalCardTransform(position, {
         up, focal, cx: width / 2, cy: height / 2, width: cardWidth, height: cardHeight
       });
@@ -339,6 +370,7 @@ import { cameraUpVector, squareCenter, verticalCardTransform } from './spatial-c
     const facing = document.querySelector('#camera').value;
     startButton.disabled = true;
     setStatus('Avvio fotocamera');
+    prepareRobotCell();
     try {
       const orientationAllowed = await allowDeviceOrientation();
       if (request !== cameraRequest) return;
@@ -389,6 +421,7 @@ import { cameraUpVector, squareCenter, verticalCardTransform } from './spatial-c
     showDetections(markerResults, []);
     showDetections(qrResults, []);
     clearCard();
+    robotCell?.reset();
     placeholder.hidden = false;
     startButton.disabled = false;
     stopButton.disabled = true;
