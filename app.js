@@ -10,10 +10,11 @@
   const placeholder = document.querySelector('#placeholder');
   const qrResults = document.querySelector('#qrResults');
   const markerResults = document.querySelector('#arucoResults');
+  const markerSize = document.querySelector('#markerSize');
+  const qrSize = document.querySelector('#qrSize');
+  const maxScanSide = 960;
   let stream;
-  let detector;
-  let animation;
-  let busy = false;
+  let session;
 
   function setStatus(message, kind = '') {
     status.textContent = message;
@@ -63,7 +64,7 @@
     el.textContent = `x ${p.x.toFixed(1)} cm · y ${p.y.toFixed(1)} cm · distanza ${p.z.toFixed(1)} cm · rot. ${p.yaw.toFixed(0)}°`;
   }
 
-  function showDetections(list, detections, size, color) {
+  function showDetections(list, detections, size) {
     list.previousElementSibling.hidden = detections.length > 0;
     while (list.children.length > detections.length) list.lastElementChild.remove();
 
@@ -76,7 +77,6 @@
         row.append(document.createElement('p'), pose);
         list.append(row);
       }
-      drawPolygon(corners, color, label);
       const text = row.firstElementChild;
       const compact = title.length > 52 ? `${title.slice(0, 52)}…` : title;
       const caption = compact ? `${label} · ${compact}` : label;
@@ -86,81 +86,78 @@
     });
   }
 
-  function sameSquare(a, b) {
-    return a.every((point, i) => Math.hypot(point.x - b[i].x, point.y - b[i].y) < 10);
+  function drawOverlay(scanners) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    for (const { detections, color } of scanners) {
+      for (const { corners, label } of detections) drawPolygon(corners, color, label);
+    }
   }
 
-  function detectMarkers(image) {
-    if (!detector) return [];
-    const markers = detector.detect(image);
-    // The same printed marker can produce both an outer and an inner contour.
-    markers.sort((a, b) => CV.perimeter(b.corners) - CV.perimeter(a.corners));
-    const detections = [];
-    for (const { id, corners } of markers) {
-      const label = `ArUco ${id}`;
-      if (!detections.some(item => item.label === label && sameSquare(item.corners, corners))) {
-        detections.push({ corners, label });
+  function addScanner(current, { mode, interval, list, size, defaultSize, color }) {
+    const worker = new Worker(`scanner-worker.js?mode=${mode}`);
+    const scanner = { worker, interval, list, color, busy: false, lastScan: -Infinity, detections: [] };
+    current.scanners.push(scanner);
+
+    worker.onmessage = ({ data }) => {
+      if (session !== current) return;
+      scanner.busy = false;
+      if (data.error) {
+        console.warn('Frame detection failed', data.error);
+        return;
       }
-    }
-    return detections;
+      if (data.width !== canvas.width || data.height !== canvas.height) return;
+      scanner.detections = data.detections;
+      showDetections(list, scanner.detections, Number(size.value) || defaultSize);
+      drawOverlay(current.scanners);
+    };
+    worker.onerror = error => {
+      if (session !== current) return;
+      worker.terminate();
+      scanner.worker = null;
+      scanner.detections = [];
+      showDetections(list, []);
+      drawOverlay(current.scanners);
+      console.warn('Scanner unavailable', error);
+      setStatus(`Camera attiva · lettore ${mode === 'aruco' ? 'ArUco' : 'QR'} non disponibile`, 'error');
+    };
   }
 
-  function detectQRCodes(image) {
-    const detections = [];
-    if (!window.jsQR) return detections;
-    const { width, height } = image;
-    const options = { inversionAttempts: 'dontInvert' };
-
-    while (true) {
-      const code = jsQR(image.data, width, height, options);
-      if (!code?.location) break;
-      const loc = code.location;
-      const corners = [loc.topLeftCorner, loc.topRightCorner, loc.bottomRightCorner, loc.bottomLeftCorner];
-      if (detections.some(item => sameSquare(item.corners, corners))) break;
-      detections.push({ corners, label: `QR ${detections.length + 1}`, title: code.data });
-
-      // jsQR returns one result per call. Cover it on the working copy and scan again.
-      tracePolygon(wctx, corners);
-      wctx.fillStyle = wctx.strokeStyle = '#fff';
-      wctx.lineWidth = 4;
-      wctx.fill();
-      wctx.stroke();
-      image = wctx.getImageData(0, 0, width, height);
-    }
-    return detections;
+  function scheduleFrame(current) {
+    const callback = time => scanFrame(current, time);
+    current.frame = current.useVideoFrames ? video.requestVideoFrameCallback(callback) : requestAnimationFrame(callback);
   }
 
-  function frame() {
-    if (!stream || video.readyState < 2 || busy) {
-      animation = requestAnimationFrame(frame);
-      return;
-    }
-    busy = true;
-    const width = video.videoWidth;
-    const height = video.videoHeight;
-    if (!width || !height) {
-      busy = false;
-      animation = requestAnimationFrame(frame);
-      return;
-    }
-    if (canvas.width !== width || canvas.height !== height) {
+  function scanFrame(current, time) {
+    if (session !== current) return;
+    scheduleFrame(current);
+    if (video.readyState < 2 || !video.videoWidth || !video.videoHeight) return;
+    if (!current.useVideoFrames && video.currentTime === current.lastFrameTime) return;
+    current.lastFrameTime = video.currentTime;
+
+    // Keep at most one frame in flight per scanner so old frames cannot queue up.
+    const ready = current.scanners.filter(scanner => scanner.worker && !scanner.busy && time - scanner.lastScan >= scanner.interval);
+    if (!ready.length) return;
+    const scale = Math.min(1, maxScanSide / Math.max(video.videoWidth, video.videoHeight));
+    const width = Math.max(1, Math.round(video.videoWidth * scale));
+    const height = Math.max(1, Math.round(video.videoHeight * scale));
+    if (work.width !== width || work.height !== height || canvas.width !== width || canvas.height !== height) {
       canvas.width = work.width = width;
       canvas.height = work.height = height;
+      for (const scanner of current.scanners) {
+        scanner.detections = [];
+        showDetections(scanner.list, []);
+      }
     }
-    ctx.clearRect(0, 0, width, height);
     wctx.drawImage(video, 0, 0, width, height);
     const image = wctx.getImageData(0, 0, width, height);
 
-    try {
-      const markerSize = Number(document.querySelector('#markerSize').value) || 10;
-      showDetections(markerResults, detectMarkers(image), markerSize, '#59f0bd');
-      const qrSize = Number(document.querySelector('#qrSize').value) || 5;
-      showDetections(qrResults, detectQRCodes(image), qrSize, '#ffc45b');
-    } catch (error) {
-      console.warn('Frame detection failed', error);
-    }
-    busy = false;
-    animation = requestAnimationFrame(frame);
+    ready.forEach((scanner, index) => {
+      // Only the last worker can take ownership of the original buffer.
+      const data = index === ready.length - 1 ? image.data : image.data.slice();
+      scanner.worker.postMessage({ width, height, data }, [data.buffer]);
+      scanner.busy = true;
+      scanner.lastScan = time;
+    });
   }
 
   async function startCamera() {
@@ -168,29 +165,46 @@
       setStatus('Fotocamera non disponibile', 'error');
       return;
     }
+    stopCamera();
+    const current = { scanners: [], useVideoFrames: typeof video.requestVideoFrameCallback === 'function' };
+    session = current;
+    startButton.disabled = true;
+    setStatus('Avvio fotocamera');
     try {
-      stream?.getTracks().forEach(track => track.stop());
-      stream = await navigator.mediaDevices.getUserMedia({
+      const nextStream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: { facingMode: { ideal: document.querySelector('#camera').value }, width: { ideal: 1280 }, height: { ideal: 720 } }
       });
+      if (session !== current) {
+        nextStream.getTracks().forEach(track => track.stop());
+        return;
+      }
+      stream = nextStream;
       video.srcObject = stream;
       await video.play();
+      if (session !== current) return;
       placeholder.hidden = true;
-      startButton.disabled = true;
       stopButton.disabled = false;
       setStatus('Camera attiva', 'live');
-      if (window.AR?.Detector) detector = new AR.Detector();
-      else setStatus('Camera attiva · libreria ArUco non caricata', 'error');
-      frame();
+      addScanner(current, { mode: 'aruco', interval: 0, list: markerResults, size: markerSize, defaultSize: 10, color: '#59f0bd' });
+      addScanner(current, { mode: 'qr', interval: 90, list: qrResults, size: qrSize, defaultSize: 5, color: '#ffc45b' });
+      scheduleFrame(current);
     } catch (error) {
+      if (session !== current) return;
+      stopCamera();
       console.error(error);
       setStatus(error.name === 'NotAllowedError' ? 'Permesso camera negato' : 'Errore avvio camera', 'error');
     }
   }
 
   function stopCamera() {
-    cancelAnimationFrame(animation);
+    const current = session;
+    session = null;
+    if (current) {
+      if (current.useVideoFrames) video.cancelVideoFrameCallback(current.frame);
+      else cancelAnimationFrame(current.frame);
+      for (const scanner of current.scanners) scanner.worker?.terminate();
+    }
     stream?.getTracks().forEach(track => track.stop());
     stream = null;
     video.srcObject = null;
@@ -205,7 +219,7 @@
 
   startButton.addEventListener('click', startCamera);
   stopButton.addEventListener('click', stopCamera);
-  document.querySelector('#camera').addEventListener('change', () => { if (stream) startCamera(); });
+  document.querySelector('#camera').addEventListener('change', () => { if (session) startCamera(); });
   window.addEventListener('pagehide', stopCamera);
   if (!window.isSecureContext) setStatus('Apri la pagina in HTTPS', 'error');
 })();
